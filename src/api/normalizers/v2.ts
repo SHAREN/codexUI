@@ -207,9 +207,10 @@ function normalizeCommandStatus(value: unknown): CommandExecutionData['status'] 
 }
 
 function normalizeFileChangeStatus(value: unknown): UiFileChangeData['status'] {
-  if (value === 'inProgress' || value === 'completed' || value === 'failed' || value === 'declined') {
+  if (value === 'completed' || value === 'failed' || value === 'declined') {
     return value
   }
+  if (value === 'inProgress' || value === 'in_progress') return 'inProgress'
   return 'completed'
 }
 
