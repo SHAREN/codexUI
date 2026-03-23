@@ -82,6 +82,17 @@ export type CommandExecutionData = {
 
 export type UiFileAttachment = { label: string; path: string }
 
+export type UiFileChangeData = {
+  path: string
+  kind: 'add' | 'delete' | 'update'
+  status: 'inProgress' | 'completed' | 'failed' | 'declined'
+  diff: string
+  movePath: string | null
+  linesAdded: number
+  linesRemoved: number
+  openLine: number | null
+}
+
 export type UiMessage = {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -92,6 +103,7 @@ export type UiMessage = {
   rawPayload?: string
   isUnhandled?: boolean
   commandExecution?: CommandExecutionData
+  fileChange?: UiFileChangeData
   turnIndex?: number
 }
 

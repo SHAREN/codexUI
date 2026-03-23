@@ -114,6 +114,45 @@
           </div>
         </div>
 
+        <div v-else-if="isFileChangeMessage(message)" class="message-row" data-role="system">
+          <div class="message-stack" data-role="system">
+            <button
+              type="button"
+              class="file-change-row"
+              :class="{ 'file-change-row-expanded': isFileChangeExpanded(message) }"
+              @click="toggleFileChangeExpand(message)"
+            >
+              <span class="file-change-chevron" :class="{ 'file-change-chevron-open': isFileChangeExpanded(message) }">></span>
+              <span class="file-change-verb">{{ fileChangeSummaryVerb(message) }}</span>
+              <code class="file-change-path" :title="message.fileChange?.path || message.text">{{ fileChangeDisplayPath(message) }}</code>
+              <span v-if="fileChangeHasStats(message)" class="file-change-stats">
+                <span v-if="fileChangeLinesAdded(message) > 0" class="file-change-stats-added">+{{ fileChangeLinesAdded(message) }}</span>
+                <span v-if="fileChangeLinesRemoved(message) > 0" class="file-change-stats-removed">-{{ fileChangeLinesRemoved(message) }}</span>
+              </span>
+            </button>
+            <div class="file-change-output-wrap" :class="{ 'file-change-output-visible': isFileChangeExpanded(message) }">
+              <div class="file-change-output-inner">
+                <div class="file-change-meta">
+                  <span class="file-change-meta-title">{{ fileChangeExpandedTitle(message) }}</span>
+                  <a
+                    v-if="fileChangeHasBrowseTarget(message)"
+                    class="message-file-link file-change-link"
+                    :href="toBrowseUrl(fileChangeBrowseTarget(message))"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    :title="fileChangeBrowseTarget(message)"
+                  >
+                    {{ fileChangeBrowseLabel(message) }}
+                  </a>
+                  <span v-else class="file-change-meta-text">{{ fileChangeDisplayPath(message) }}</span>
+                  <span v-if="message.fileChange?.movePath" class="file-change-meta-text">Moved to {{ message.fileChange.movePath }}</span>
+                </div>
+                <pre class="file-change-output">{{ fileChangeDiffText(message) }}</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div v-else class="message-row" :data-role="message.role" :data-message-type="message.messageType || ''">
           <div class="message-stack" :data-role="message.role">
             <article class="message-body" :data-role="message.role">
@@ -311,12 +350,13 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import type { ThreadScrollState, UiLiveOverlay, UiMessage, UiServerRequest } from '../../types/codex'
+import type { ThreadScrollState, UiFileChangeData, UiLiveOverlay, UiMessage, UiServerRequest } from '../../types/codex'
 import IconTablerX from '../icons/IconTablerX.vue'
 import IconTablerArrowBackUp from '../icons/IconTablerArrowBackUp.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
 
 const expandedCommandIds = ref<Set<string>>(new Set())
+const expandedFileChangeIds = ref<Set<string>>(new Set())
 const collapsingCommandIds = ref<Set<string>>(new Set())
 const expandedWorkedIds = ref<Set<string>>(new Set())
 const prevCommandStatuses = ref<Record<string, string>>({})
@@ -325,10 +365,18 @@ function isCommandMessage(message: UiMessage): boolean {
   return message.messageType === 'commandExecution' && !!message.commandExecution
 }
 
+function isFileChangeMessage(message: UiMessage): boolean {
+  return message.messageType === 'fileChange' && !!message.fileChange
+}
+
 function isCommandExpanded(message: UiMessage): boolean {
   if (message.commandExecution?.status === 'inProgress') return true
   if (collapsingCommandIds.value.has(message.id)) return true
   return expandedCommandIds.value.has(message.id)
+}
+
+function isFileChangeExpanded(message: UiMessage): boolean {
+  return expandedFileChangeIds.value.has(message.id)
 }
 
 function isCommandCollapsing(message: UiMessage): boolean {
@@ -341,6 +389,13 @@ function toggleCommandExpand(message: UiMessage): void {
   if (next.has(message.id)) next.delete(message.id)
   else next.add(message.id)
   expandedCommandIds.value = next
+}
+
+function toggleFileChangeExpand(message: UiMessage): void {
+  const next = new Set(expandedFileChangeIds.value)
+  if (next.has(message.id)) next.delete(message.id)
+  else next.add(message.id)
+  expandedFileChangeIds.value = next
 }
 
 function toggleWorkedExpand(message: UiMessage): void {
@@ -372,6 +427,61 @@ function commandStatusClass(message: UiMessage): string {
   if (s === 'inProgress') return 'cmd-status-running'
   if (s === 'completed' && message.commandExecution?.exitCode === 0) return 'cmd-status-ok'
   return 'cmd-status-error'
+}
+
+function readFileChangeData(message: UiMessage): UiFileChangeData | null {
+  return isFileChangeMessage(message) ? message.fileChange ?? null : null
+}
+
+function fileChangeSummaryVerb(message: UiMessage): string {
+  const change = readFileChangeData(message)
+  if (!change) return 'Edited'
+  if (change.status === 'failed') return 'Failed'
+  if (change.status === 'declined') return 'Declined'
+  if (change.kind === 'add') return change.status === 'inProgress' ? 'Creating' : 'Created'
+  if (change.kind === 'delete') return change.status === 'inProgress' ? 'Deleting' : 'Deleted'
+  return change.status === 'inProgress' ? 'Editing' : 'Edited'
+}
+
+function fileChangeExpandedTitle(message: UiMessage): string {
+  const change = readFileChangeData(message)
+  if (!change) return 'File change'
+  if (change.kind === 'add') return 'Created file'
+  if (change.kind === 'delete') return 'Deleted file'
+  return 'Edited file'
+}
+
+function fileChangeDisplayPath(message: UiMessage): string {
+  return readFileChangeData(message)?.path || message.text || '(file)'
+}
+
+function fileChangeLinesAdded(message: UiMessage): number {
+  return readFileChangeData(message)?.linesAdded ?? 0
+}
+
+function fileChangeLinesRemoved(message: UiMessage): number {
+  return readFileChangeData(message)?.linesRemoved ?? 0
+}
+
+function fileChangeHasStats(message: UiMessage): boolean {
+  return fileChangeLinesAdded(message) > 0 || fileChangeLinesRemoved(message) > 0
+}
+
+function fileChangeBrowseTarget(message: UiMessage): string {
+  return readFileChangeData(message)?.path || ''
+}
+
+function fileChangeHasBrowseTarget(message: UiMessage): boolean {
+  return toBrowseUrl(fileChangeBrowseTarget(message)) !== '#'
+}
+
+function fileChangeBrowseLabel(message: UiMessage): string {
+  return fileChangeBrowseTarget(message) || fileChangeDisplayPath(message)
+}
+
+function fileChangeDiffText(message: UiMessage): string {
+  const diff = readFileChangeData(message)?.diff ?? ''
+  return diff.trim().length > 0 ? diff : '(no diff data)'
 }
 
 function scheduleCollapse(messageId: string): void {
@@ -1339,6 +1449,7 @@ watch(
   () => props.activeThreadId,
   () => {
     modalImageUrl.value = ''
+    expandedFileChangeIds.value = new Set()
     failedMarkdownImageKeys.value = new Set()
   },
   { flush: 'post' },
@@ -1784,5 +1895,76 @@ onBeforeUnmount(() => {
 
 .cmd-output {
   @apply m-0 px-3 py-2 text-xs font-mono text-zinc-200 whitespace-pre-wrap break-words max-h-60 overflow-y-auto;
+}
+
+.file-change-row {
+  @apply w-full flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 cursor-pointer transition text-left hover:bg-zinc-100;
+}
+
+.file-change-row-expanded {
+  @apply rounded-b-none border-b-0;
+}
+
+.file-change-chevron {
+  @apply text-[10px] text-zinc-400 transition-transform duration-150 flex-shrink-0;
+}
+
+.file-change-chevron-open {
+  transform: rotate(90deg);
+}
+
+.file-change-verb {
+  @apply text-xs font-medium text-zinc-600 flex-shrink-0;
+}
+
+.file-change-path {
+  @apply flex-1 min-w-0 truncate text-xs font-mono text-zinc-700;
+}
+
+.file-change-stats {
+  @apply flex items-center gap-1.5 flex-shrink-0 text-[11px] font-medium;
+}
+
+.file-change-stats-added {
+  @apply text-emerald-600;
+}
+
+.file-change-stats-removed {
+  @apply text-rose-600;
+}
+
+.file-change-output-wrap {
+  @apply rounded-b-lg border border-zinc-200 border-t-0 bg-white/90;
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms ease-out;
+}
+
+.file-change-output-visible {
+  grid-template-rows: 1fr;
+}
+
+.file-change-output-inner {
+  @apply overflow-hidden min-h-0 flex flex-col gap-2 px-3 py-2.5;
+}
+
+.file-change-meta {
+  @apply flex flex-wrap items-center gap-2 text-xs text-zinc-500;
+}
+
+.file-change-meta-title {
+  @apply font-semibold uppercase tracking-[0.18em] text-[10px] text-zinc-500;
+}
+
+.file-change-meta-text {
+  @apply text-xs text-zinc-500 break-all;
+}
+
+.file-change-link {
+  @apply text-xs break-all;
+}
+
+.file-change-output {
+  @apply m-0 rounded-md border border-zinc-200 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 whitespace-pre-wrap break-words max-h-80 overflow-y-auto;
 }
 </style>
