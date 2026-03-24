@@ -1,5 +1,5 @@
 <template>
-  <form class="thread-composer" @submit.prevent="onSubmit('steer')">
+  <form class="thread-composer" @submit.prevent="onComposerSubmit">
     <p v-if="dictationErrorText" class="thread-composer-dictation-error">
       {{ dictationErrorText }}
     </p>
@@ -102,6 +102,7 @@
           class="thread-composer-input"
           :placeholder="placeholderText"
           :disabled="isInteractionDisabled"
+          enterkeyhint="enter"
           @input="onInputChange"
           @keydown="onInputKeydown"
         />
@@ -285,6 +286,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ReasoningEffort } from '../../types/codex'
 import { useDictation } from '../../composables/useDictation'
+import { useMobile } from '../../composables/useMobile'
 import { searchComposerFiles, uploadFile, type ComposerFileSuggestion } from '../../api/codexGateway'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
@@ -366,6 +368,7 @@ const selectedImages = ref<SelectedImage[]>([])
 const selectedSkills = ref<SkillItem[]>([])
 const fileAttachments = ref<FileAttachment[]>([])
 const folderUploadGroups = ref<FolderUploadGroup[]>([])
+const { isMobile } = useMobile()
 
 const dictationFeedback = ref('')
 const {
@@ -423,6 +426,7 @@ let fileMentionDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let isHoldPressActive = false
 let dictationShouldRollbackLatestUserTurn = false
 const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+const isTouchPrimaryInput = ref(false)
 
 const reasoningOptions: Array<{ value: ReasoningEffort; label: string }> = [
   { value: 'none', label: 'None' },
@@ -483,10 +487,22 @@ const dictationDurationLabel = computed(() => {
   const seconds = totalSeconds % 60
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 })
+const shouldUseTouchEnterBehavior = computed(() => isMobile.value || isTouchPrimaryInput.value)
 
 const placeholderText = computed(() =>
   props.activeThreadId ? 'Type a message... (@ for files, / for skills)' : 'Select a thread to send a message',
 )
+
+function readTouchPrimaryInput(): boolean {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
+  if (navigator.maxTouchPoints <= 0) return false
+  return window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(hover: none)').matches
+}
+
+function onComposerSubmit(): void {
+  if (shouldUseTouchEnterBehavior.value) return
+  onSubmit('steer')
+}
 
 function onSubmit(mode: 'steer' | 'queue' = 'steer', options?: { rollbackLatestUserTurn?: boolean }): void {
   const text = draft.value.trim()
@@ -795,9 +811,11 @@ function onInputKeydown(event: KeyboardEvent): void {
     }
   }
 
-  const shouldSend = props.sendWithEnter !== false
-    ? event.key === 'Enter' && !event.shiftKey
-    : event.key === 'Enter' && (event.metaKey || event.ctrlKey)
+  const shouldSend = shouldUseTouchEnterBehavior.value
+    ? event.key === 'Enter' && (event.metaKey || event.ctrlKey)
+    : props.sendWithEnter !== false
+      ? event.key === 'Enter' && !event.shiftKey
+      : event.key === 'Enter' && (event.metaKey || event.ctrlKey)
   if (shouldSend) {
     event.preventDefault()
     onSubmit(props.isTurnInProgress ? inProgressMode.value : 'steer')
@@ -967,6 +985,7 @@ function onDocumentClick(event: MouseEvent): void {
 }
 
 onMounted(() => {
+  isTouchPrimaryInput.value = readTouchPrimaryInput()
   document.addEventListener('click', onDocumentClick)
 })
 
