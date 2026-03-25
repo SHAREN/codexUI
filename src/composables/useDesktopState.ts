@@ -771,6 +771,12 @@ export function useDesktopState() {
   const selectedThreadScrollState = computed<ThreadScrollState | null>(
     () => scrollStateByThreadId.value[selectedThreadId.value] ?? null,
   )
+  function shouldAutoScrollSelectedThread(): boolean {
+    const threadId = selectedThreadId.value
+    if (!threadId) return true
+    const scrollState = scrollStateByThreadId.value[threadId]
+    return !scrollState || scrollState.isAtBottom === true
+  }
   const selectedThreadServerRequests = computed<UiServerRequest[]>(() => {
     const rows: UiServerRequest[] = []
     const selected = selectedThreadId.value
@@ -1309,6 +1315,9 @@ export function useDesktopState() {
     scrollStateByThreadId.value = {
       ...scrollStateByThreadId.value,
       [threadId]: normalizedState,
+    }
+    if (threadId === selectedThreadId.value && normalizedState.isAtBottom === false) {
+      shouldAutoScrollOnNextAgentEvent = false
     }
     saveThreadScrollStateMap(scrollStateByThreadId.value)
   }
@@ -2448,7 +2457,7 @@ export function useDesktopState() {
     }
 
     if (isInProgress) {
-      shouldAutoScrollOnNextAgentEvent = true
+      shouldAutoScrollOnNextAgentEvent = shouldAutoScrollSelectedThread()
       void startTurnForThread(threadId, nextText, imageUrls, skills, fileAttachments).catch((unknownError) => {
         const errorMessage = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
         setTurnErrorForThread(threadId, errorMessage)
@@ -2458,7 +2467,7 @@ export function useDesktopState() {
     }
 
     error.value = ''
-    shouldAutoScrollOnNextAgentEvent = true
+    shouldAutoScrollOnNextAgentEvent = shouldAutoScrollSelectedThread()
     setTurnSummaryForThread(threadId, null)
     setTurnActivityForThread(
       threadId,
@@ -2517,7 +2526,7 @@ export function useDesktopState() {
         [threadId]: true,
       }
       setSelectedThreadId(threadId)
-      shouldAutoScrollOnNextAgentEvent = true
+      shouldAutoScrollOnNextAgentEvent = shouldAutoScrollSelectedThread()
       setTurnSummaryForThread(threadId, null)
       setTurnActivityForThread(
         threadId,
@@ -2647,7 +2656,7 @@ export function useDesktopState() {
       : omitKey(queuedMessagesByThreadId.value, threadId)
     isSendingMessage.value = true
     error.value = ''
-    shouldAutoScrollOnNextAgentEvent = true
+    shouldAutoScrollOnNextAgentEvent = shouldAutoScrollSelectedThread()
     setTurnSummaryForThread(threadId, null)
     setTurnActivityForThread(threadId, { label: 'Thinking', details: buildPendingTurnDetails(selectedModelId.value, selectedReasoningEffort.value) })
     setTurnErrorForThread(threadId, null)

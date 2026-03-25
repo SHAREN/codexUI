@@ -1342,9 +1342,11 @@ function applySavedScrollState(): void {
 
   const maxScrollTop = Math.max(container.scrollHeight - container.clientHeight, 0)
   const targetScrollTop =
-    typeof savedState.scrollRatio === 'number'
-      ? savedState.scrollRatio * maxScrollTop
-      : savedState.scrollTop
+    savedState.scrollTop <= maxScrollTop
+      ? savedState.scrollTop
+      : typeof savedState.scrollRatio === 'number'
+        ? savedState.scrollRatio * maxScrollTop
+        : savedState.scrollTop
   container.scrollTop = Math.min(Math.max(targetScrollTop, 0), maxScrollTop)
   emitScrollState(container)
 }
@@ -1440,7 +1442,7 @@ watch(
 watch(
   () => props.liveOverlay,
   async (overlay) => {
-    if (!overlay) return
+    if (!overlay || !shouldLockToBottom()) return
     await nextTick()
     enforceBottomState()
     scheduleBottomLock(8)
