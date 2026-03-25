@@ -646,6 +646,21 @@ function insertTurnSummaryMessage(messages: UiMessage[], summary: TurnSummarySta
   return next
 }
 
+function getCurrentTurnDisplayIds(messages: UiMessage[]): string[] {
+  let lastUserIndex = -1
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === 'user') {
+      lastUserIndex = index
+      break
+    }
+  }
+  if (lastUserIndex < 0) return []
+  return messages
+    .slice(lastUserIndex)
+    .filter((message) => message.messageType !== WORKED_MESSAGE_TYPE)
+    .map((message) => message.id)
+}
+
 function omitKey<TValue>(record: Record<string, TValue>, key: string): Record<string, TValue> {
   if (!(key in record)) return record
   const next = { ...record }
@@ -1420,6 +1435,7 @@ export function useDesktopState() {
       ...persistedMessagesByThreadId.value,
       [threadId]: nextMessages,
     }
+    syncCurrentTurnOrder(threadId)
   }
 
   function recordLiveItemOrder(threadId: string, messageId: string): void {
@@ -1432,6 +1448,31 @@ export function useDesktopState() {
     }
   }
 
+  function setCurrentTurnOrderForThread(threadId: string, nextOrder: string[]): void {
+    const previous = liveItemOrderByThreadId.value[threadId] ?? []
+    if (previous.length === nextOrder.length && previous.every((id, index) => id === nextOrder[index])) {
+      return
+    }
+    if (nextOrder.length === 0) {
+      liveItemOrderByThreadId.value = omitKey(liveItemOrderByThreadId.value, threadId)
+      return
+    }
+    liveItemOrderByThreadId.value = {
+      ...liveItemOrderByThreadId.value,
+      [threadId]: nextOrder,
+    }
+  }
+
+  function syncCurrentTurnOrder(threadId: string): void {
+    if (!threadId) return
+    const persisted = persistedMessagesByThreadId.value[threadId] ?? []
+    const liveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
+    const liveCommands = liveCommandsByThreadId.value[threadId] ?? []
+    const previousOrder = liveItemOrderByThreadId.value[threadId] ?? []
+    const merged = mergePersistedMessagesWithLiveItems(persisted, [...liveCommands, ...liveAgent], previousOrder)
+    setCurrentTurnOrderForThread(threadId, getCurrentTurnDisplayIds(merged))
+  }
+
   function setLiveAgentMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
     const previous = liveAgentMessagesByThreadId.value[threadId] ?? []
     if (areMessageArraysEqual(previous, nextMessages)) return
@@ -1439,6 +1480,7 @@ export function useDesktopState() {
       ...liveAgentMessagesByThreadId.value,
       [threadId]: nextMessages,
     }
+    syncCurrentTurnOrder(threadId)
   }
 
   function upsertLiveAgentMessage(threadId: string, nextMessage: UiMessage): void {
@@ -1459,6 +1501,7 @@ export function useDesktopState() {
         [threadId]: nextMessages,
       }
     }
+    syncCurrentTurnOrder(threadId)
   }
 
   function setLiveReasoningText(threadId: string, text: string): void {
