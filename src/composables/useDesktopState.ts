@@ -14,9 +14,11 @@ import {
   rollbackThread,
   getThreadGroups,
   getWorkspaceRootsState,
+  getThreadReadState,
   setCodexSpeedMode,
   setDefaultModel,
   setWorkspaceRootsState,
+  persistThreadReadState,
   getThreadTitleCache,
   persistThreadTitle,
   generateThreadTitle,
@@ -74,9 +76,51 @@ function loadReadStateMap(): Record<string, string> {
   }
 }
 
+function compareReadStateIso(first: string | undefined, second: string | undefined): number {
+  const left = typeof first === 'string' ? first.trim() : ''
+  const right = typeof second === 'string' ? second.trim() : ''
+  if (!left && !right) return 0
+  if (!left) return -1
+  if (!right) return 1
+  return left.localeCompare(right)
+}
+
+function mergeReadStateMaps(...maps: Array<Record<string, string> | null | undefined>): Record<string, string> {
+  const merged: Record<string, string> = {}
+
+  for (const map of maps) {
+    if (!map) continue
+
+    for (const [threadId, readAtIso] of Object.entries(map)) {
+      if (!threadId || !readAtIso) continue
+      if (compareReadStateIso(readAtIso, merged[threadId]) > 0) {
+        merged[threadId] = readAtIso
+      }
+    }
+  }
+
+  return merged
+}
+
+function areReadStateMapsEqual(first: Record<string, string>, second: Record<string, string>): boolean {
+  const firstEntries = Object.entries(first)
+  const secondEntries = Object.entries(second)
+  if (firstEntries.length !== secondEntries.length) return false
+
+  for (const [threadId, readAtIso] of firstEntries) {
+    if (second[threadId] !== readAtIso) return false
+  }
+
+  return true
+}
+
 function saveReadStateMap(state: Record<string, string>): void {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(READ_STATE_STORAGE_KEY, JSON.stringify(state))
+}
+
+function hasUnreadThreadUpdate(lastReadIso: string | undefined, updatedAtIso: string): boolean {
+  return compareReadStateIso(lastReadIso, updatedAtIso) < 0
 }
 
 function clamp(value: number, minValue: number, maxValue: number): number {
@@ -1022,7 +1066,7 @@ export function useDesktopState() {
         const isSelected = selectedThreadId.value === thread.id
         const lastReadIso = readStateByThreadId.value[thread.id]
         const unreadByEvent = eventUnreadByThreadId.value[thread.id] === true
-        const unread = !isSelected && !inProgress && (unreadByEvent || lastReadIso !== thread.updatedAtIso)
+        const unread = !isSelected && !inProgress && (unreadByEvent || hasUnreadThreadUpdate(lastReadIso, thread.updatedAtIso))
 
         return {
           ...thread,
@@ -1032,6 +1076,12 @@ export function useDesktopState() {
       }),
     }))
     projectGroups.value = mergeThreadGroups(projectGroups.value, flaggedGroups)
+  }
+
+  function commitReadState(nextState: Record<string, string>): void {
+    readStateByThreadId.value = nextState
+    saveReadStateMap(nextState)
+    void persistThreadReadState(nextState)
   }
 
   function insertOptimisticThread(threadId: string, cwd: string, firstMessageText: string): void {
@@ -1078,8 +1128,7 @@ export function useDesktopState() {
     const activeThreadIds = new Set(flatThreads.map((thread) => thread.id))
     const nextReadState = pruneThreadStateMap(readStateByThreadId.value, activeThreadIds)
     if (nextReadState !== readStateByThreadId.value) {
-      readStateByThreadId.value = nextReadState
-      saveReadStateMap(nextReadState)
+      commitReadState(nextReadState)
     }
     const nextScrollState = pruneThreadStateMap(scrollStateByThreadId.value, activeThreadIds)
     if (nextScrollState !== scrollStateByThreadId.value) {
@@ -1112,11 +1161,10 @@ export function useDesktopState() {
     const thread = flattenThreads(sourceGroups.value).find((row) => row.id === threadId)
     if (!thread) return
 
-    readStateByThreadId.value = {
-      ...readStateByThreadId.value,
+    const nextReadState = mergeReadStateMaps(readStateByThreadId.value, {
       [threadId]: thread.updatedAtIso,
-    }
-    saveReadStateMap(readStateByThreadId.value)
+    })
+    commitReadState(nextReadState)
     if (eventUnreadByThreadId.value[threadId]) {
       eventUnreadByThreadId.value = omitKey(eventUnreadByThreadId.value, threadId)
     }
@@ -2140,6 +2188,21 @@ export function useDesktopState() {
     }
   }
 
+  async function syncThreadReadStateFromSharedStore(): Promise<void> {
+    const sharedState = await getThreadReadState()
+    if (sharedState === null) return
+
+    const mergedState = mergeReadStateMaps(sharedState, readStateByThreadId.value)
+    if (!areReadStateMapsEqual(readStateByThreadId.value, mergedState)) {
+      readStateByThreadId.value = mergedState
+      saveReadStateMap(mergedState)
+    }
+
+    if (!areReadStateMapsEqual(sharedState, mergedState)) {
+      void persistThreadReadState(mergedState)
+    }
+  }
+
   async function requestThreadTitleGeneration(threadId: string, prompt: string, cwd: string | null): Promise<void> {
     if (threadTitleById.value[threadId]) return
     const trimmed = prompt.trim()
@@ -2162,7 +2225,11 @@ export function useDesktopState() {
     }
 
     try {
-      const [groups] = await Promise.all([getThreadGroups(), loadThreadTitleCacheIfNeeded()])
+      const [groups] = await Promise.all([
+        getThreadGroups(),
+        loadThreadTitleCacheIfNeeded(),
+        syncThreadReadStateFromSharedStore(),
+      ])
       await hydrateWorkspaceRootsStateIfNeeded(groups)
 
       const nextProjectOrder = mergeProjectOrder(projectOrder.value, groups)

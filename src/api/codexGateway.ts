@@ -67,6 +67,7 @@ export type TelegramStatus = {
   mappedThreads: number
   lastError: string
 }
+export type ThreadReadStateMap = Record<string, string>
 
 async function callRpc<T>(method: string, params?: unknown): Promise<T> {
   try {
@@ -602,6 +603,41 @@ function getErrorMessageFromPayload(payload: unknown, fallback: string): string 
 }
 
 export type ThreadTitleCache = { titles: Record<string, string>; order: string[] }
+
+function normalizeThreadReadStateMap(payload: unknown): ThreadReadStateMap {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return {}
+
+  const next: ThreadReadStateMap = {}
+  for (const [threadId, readAtIso] of Object.entries(payload as Record<string, unknown>)) {
+    if (typeof threadId !== 'string' || threadId.length === 0) continue
+    if (typeof readAtIso !== 'string' || readAtIso.length === 0) continue
+    next[threadId] = readAtIso
+  }
+  return next
+}
+
+export async function getThreadReadState(): Promise<ThreadReadStateMap | null> {
+  try {
+    const response = await fetch('/codex-api/thread-read-state')
+    if (!response.ok) return null
+    const envelope = (await response.json()) as { data?: unknown }
+    return normalizeThreadReadStateMap(envelope.data)
+  } catch {
+    return null
+  }
+}
+
+export async function persistThreadReadState(state: ThreadReadStateMap): Promise<void> {
+  try {
+    await fetch('/codex-api/thread-read-state', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state }),
+    })
+  } catch {
+    // Best-effort persist
+  }
+}
 
 export async function getThreadTitleCache(): Promise<ThreadTitleCache> {
   try {

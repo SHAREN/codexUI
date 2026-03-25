@@ -488,6 +488,10 @@ function trimThreadTitleCache(cache: ThreadTitleCache): ThreadTitleCache {
   return { titles, order }
 }
 
+function normalizeThreadReadStateMap(value: unknown): Record<string, string> {
+  return normalizeStringRecord(value)
+}
+
 function mergeThreadTitleCaches(base: ThreadTitleCache, overlay: ThreadTitleCache): ThreadTitleCache {
   const titles = { ...base.titles, ...overlay.titles }
   const order: string[] = []
@@ -527,6 +531,31 @@ async function writeThreadTitleCache(cache: ThreadTitleCache): Promise<void> {
     payload = {}
   }
   payload['thread-titles'] = cache
+  await writeFile(statePath, JSON.stringify(payload), 'utf8')
+}
+
+async function readThreadReadStateMap(): Promise<Record<string, string>> {
+  const statePath = getCodexGlobalStatePath()
+  try {
+    const raw = await readFile(statePath, 'utf8')
+    const payload = asRecord(JSON.parse(raw)) ?? {}
+    return normalizeThreadReadStateMap(payload['thread-read-state'])
+  } catch {
+    return {}
+  }
+}
+
+async function writeThreadReadStateMap(state: Record<string, string>): Promise<void> {
+  const statePath = getCodexGlobalStatePath()
+  let payload: Record<string, unknown> = {}
+  try {
+    const raw = await readFile(statePath, 'utf8')
+    payload = asRecord(JSON.parse(raw)) ?? {}
+  } catch {
+    payload = {}
+  }
+
+  payload['thread-read-state'] = normalizeThreadReadStateMap(state)
   await writeFile(statePath, JSON.stringify(payload), 'utf8')
 }
 
@@ -2132,6 +2161,12 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
+      if (req.method === 'GET' && url.pathname === '/codex-api/thread-read-state') {
+        const state = await readThreadReadStateMap()
+        setJson(res, 200, { data: state })
+        return
+      }
+
       if (req.method === 'POST' && url.pathname === '/codex-api/thread-search') {
         const payload = asRecord(await readJsonBody(req))
         const query = typeof payload?.query === 'string' ? payload.query.trim() : ''
@@ -2181,11 +2216,22 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
+      if (req.method === 'PUT' && url.pathname === '/codex-api/thread-read-state') {
+        const payload = await readJsonBody(req)
+        const record = asRecord(payload)
+        if (!record) {
+          setJson(res, 400, { error: 'Invalid body: expected object' })
+          return
+        }
+        await writeThreadReadStateMap(normalizeThreadReadStateMap(record.state ?? record))
+        setJson(res, 200, { ok: true })
+        return
+      }
+
       if (req.method === 'GET' && url.pathname === '/codex-api/telegram/status') {
         setJson(res, 200, { data: telegramBridge.getStatus() })
         return
       }
-
       if (req.method === 'GET' && url.pathname === '/codex-api/events') {
         res.statusCode = 200
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
